@@ -1,0 +1,43 @@
+# Python artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.python-version
+
+# Virtual environments
+**/venv/
+**/env/
+**/ENV/
+**/.venv/
+
+# Environment files
+.env
+.env.*
+
+# Local application data
+**/data/
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Package / build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
