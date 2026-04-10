@@ -564,6 +564,7 @@ Given text:
 """
 
     first_text = pages_to_tagged_text(groups[0])
+    print(f"[indexer] generate_toc input text ({len(first_text)} chars): {first_text[:500]!r}")
     resp = await _llm_async(init_prompt + first_text, max_tokens=8192)
     print(f"[indexer] generate_toc raw response ({len(resp)} chars): {resp[:300]!r}")
     toc = _extract_json(resp)
@@ -883,6 +884,12 @@ async def _build_index_async(
         print("[indexer] Low accuracy — falling back to text-based TOC generation")
         flat_toc = await generate_toc_from_text(pages)
         flat_toc = [e for e in flat_toc if e.get("physical_index") is not None]
+
+    # Fallback: if no sections detected, create one root section covering all pages
+    # so that queries still work against the full document content.
+    if not flat_toc:
+        print("[indexer] No sections detected — creating single root section for full document")
+        flat_toc = [{"structure": "1", "title": filename, "physical_index": 1}]
 
     # Step 6: Build tree
     print("[indexer] Building tree structure...")
