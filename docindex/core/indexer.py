@@ -32,16 +32,16 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # ── Model config ──────────────────────────────────────────────────────────────
 
-# Gemini 2.5 Pro: beats GPT-4o on structured JSON extraction & long context
-# Use for index building (quality matters, called once per document)
-INDEXER_MODEL   = "gemini-2.5-pro"
+INDEXER_MODEL   = os.environ.get("INDEXER_MODEL",   "gemini-2.5-pro")
+RETRIEVAL_MODEL = os.environ.get("RETRIEVAL_MODEL", "gemini-2.5-flash")
 
-# Gemini 2.0 Flash: cheap & fast, used for per-hop retrieval decisions
-RETRIEVAL_MODEL = "gemini-2.5-flash"
+VERTEX_PROJECT  = os.environ.get("VERTEX_PROJECT",  "docindex-prod")
+VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 
 MAX_RETRIES    = 4
 RETRY_BASE     = 1.5   # seconds, exponential backoff
@@ -49,12 +49,15 @@ MAX_TOKENS_PER_NODE = 20_000   # mirrors PageIndex default
 MAX_PAGES_PER_NODE  = 10       # mirrors PageIndex default
 TOC_CHECK_PAGES     = 20       # pages to scan for TOC
 
+_genai_client = None
 
-def _configure():
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("Set GEMINI_API_KEY or GOOGLE_API_KEY environment variable")
-    genai.configure(api_key=api_key)
+def _get_client():
+    global _genai_client
+    if _genai_client is None:
+        _genai_client = genai.Client(
+            vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION
+        )
+    return _genai_client
 
 
 # ── Retry wrapper ─────────────────────────────────────────────────────────────
@@ -62,23 +65,19 @@ def _configure():
 async def _llm_async(prompt: str, model_name: str = INDEXER_MODEL,
                      temperature: float = 0.1, max_tokens: int = 4096) -> str:
     """Async LLM call with exponential backoff retry."""
-    _configure()
-    model = genai.GenerativeModel(model_name)
+    client = _get_client()
+    cfg = types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_tokens)
 
     for attempt in range(MAX_RETRIES):
         try:
             loop = asyncio.get_running_loop()
             resp = await loop.run_in_executor(
                 None,
-                lambda: model.generate_content(
-                    prompt,
-                    generation_config={
-                        "temperature": temperature,
-                        "max_output_tokens": max_tokens,
-                    }
+                lambda: client.models.generate_content(
+                    model=model_name, contents=prompt, config=cfg
                 )
             )
-            return resp.text.strip()
+            return (resp.text or "").strip()
         except Exception as e:
             if attempt == MAX_RETRIES - 1:
                 raise
@@ -90,20 +89,16 @@ async def _llm_async(prompt: str, model_name: str = INDEXER_MODEL,
 
 def _llm_sync(prompt: str, model_name: str = INDEXER_MODEL,
               temperature: float = 0.1, max_tokens: int = 4096) -> str:
-    """
-    Synchronous LLM call. Safe to call from any context including inside a
-    running event loop — uses a thread executor instead of asyncio.run().
-    """
-    _configure()
-    model = genai.GenerativeModel(model_name)
+    """Synchronous LLM call with retry."""
+    client = _get_client()
+    cfg = types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_tokens)
 
     for attempt in range(MAX_RETRIES):
         try:
-            resp = model.generate_content(
-                prompt,
-                generation_config={"temperature": temperature, "max_output_tokens": max_tokens},
+            resp = client.models.generate_content(
+                model=model_name, contents=prompt, config=cfg
             )
-            return resp.text.strip()
+            return (resp.text or "").strip()
         except Exception as e:
             if attempt == MAX_RETRIES - 1:
                 raise

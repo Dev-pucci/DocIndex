@@ -20,8 +20,8 @@ Pillow==10.4.0         # Image handling
 # Table extraction (required for PDF table parsing in retriever)
 pandas==2.2.3
 
-# Google Gemini (cheap LLM)
-google-generativeai==0.8.3
+# Google Gemini via Vertex AI (new unified SDK)
+google-genai>=1.0.0
 
 # Utilities
 python-dotenv==1.0.1

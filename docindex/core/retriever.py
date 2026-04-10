@@ -17,22 +17,28 @@ import re
 import time
 import concurrent.futures
 from typing import Optional, Generator
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from core.parser import tree_to_outline, get_node_by_id, _get_node_id, _get_page, _get_children
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
+VERTEX_PROJECT  = os.environ.get("VERTEX_PROJECT",  "docindex-prod")
+VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
+
+RETRIEVAL_MODEL = os.environ.get("RETRIEVAL_MODEL", "gemini-2.5-flash")
+ANSWER_MODEL    = os.environ.get("ANSWER_MODEL",    "gemini-2.5-pro")
+
+_genai_client = None
+
 def _get_client():
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("Set GEMINI_API_KEY or GOOGLE_API_KEY")
-    genai.configure(api_key=api_key)
-    return genai
-
-
-RETRIEVAL_MODEL = "gemini-2.5-flash"   # cheap, fast — hop decisions
-ANSWER_MODEL    = "gemini-2.5-pro"     # high quality — final answer
+    global _genai_client
+    if _genai_client is None:
+        _genai_client = genai.Client(
+            vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION
+        )
+    return _genai_client
 
 MAX_HOPS       = 6
 MAX_NODES_READ = 10
@@ -42,7 +48,7 @@ _LLM_BACKOFF   = 1.5   # seconds base
 
 # ── FIX 5: _call_json with retry ─────────────────────────────────────────────
 
-def _call_json(client, prompt: str, max_tokens: int = 600,
+def _call_json(prompt: str, max_tokens: int = 600,
                model_name: str = RETRIEVAL_MODEL) -> dict:
     """
     Call Gemini and parse JSON response.
@@ -50,16 +56,16 @@ def _call_json(client, prompt: str, max_tokens: int = 600,
     (rate limits, transient 500s, malformed JSON on first attempt).
     Returns {} only if all retries exhausted.
     """
-    model = client.GenerativeModel(model_name)
+    client = _get_client()
+    cfg = types.GenerateContentConfig(temperature=0.1, max_output_tokens=max_tokens)
     last_exc = None
 
     for attempt in range(_LLM_RETRIES):
         try:
-            response = model.generate_content(
-                prompt,
-                generation_config={"temperature": 0.1, "max_output_tokens": max_tokens},
+            response = client.models.generate_content(
+                model=model_name, contents=prompt, config=cfg
             )
-            text = response.text.strip()
+            text = (response.text or "").strip()
             text = re.sub(r"^```(?:json)?", "", text).rstrip("` \n")
             try:
                 return json.loads(text)
@@ -85,16 +91,15 @@ def _call_json(client, prompt: str, max_tokens: int = 600,
     return {}
 
 
-def _call_streaming(client, prompt: str, max_tokens: int = 2048,
+def _call_streaming(prompt: str, max_tokens: int = 2048,
                     model_name: str = ANSWER_MODEL):
     """Stream tokens from Gemini with retry on first attempt."""
-    model = client.GenerativeModel(model_name)
+    client = _get_client()
+    cfg = types.GenerateContentConfig(temperature=0.15, max_output_tokens=max_tokens)
     for attempt in range(_LLM_RETRIES):
         try:
-            return model.generate_content(
-                prompt,
-                generation_config={"temperature": 0.15, "max_output_tokens": max_tokens},
-                stream=True,
+            return client.models.generate_content_stream(
+                model=model_name, contents=prompt, config=cfg
             )
         except Exception as e:
             if attempt < _LLM_RETRIES - 1:
@@ -216,8 +221,7 @@ def retrieve(query: str, tree: dict,
     source_file: path to original PDF — used for table enrichment (fix 1).
     Returns: {answer, sources, retrieval_trace}
     """
-    client = _get_client()
-    return _iterative_retrieve(client, query, tree, chat_history, source_file)
+    return _iterative_retrieve(query, tree, chat_history, source_file)
 
 
 def retrieve_streaming(query: str, tree: dict,
@@ -227,14 +231,13 @@ def retrieve_streaming(query: str, tree: dict,
     Streaming iterative retrieval.
     Yields: hop events, sources, then streamed answer text chunks.
     """
-    client  = _get_client()
     outline = tree_to_outline(tree)
     hop_log = []
     visited = set()
     collected = []   # [(node, [passage_strings])]
 
     # Phase 1: Plan
-    plan = _call_json(client, _plan_prompt(query, outline, chat_history), max_tokens=400)
+    plan = _call_json(_plan_prompt(query, outline, chat_history), max_tokens=400)
     hop_log.append({"hop": 0, "action": "PLAN",
                     "reasoning": plan.get("reasoning", ""),
                     "targets": plan.get("section_ids", [])})
@@ -257,7 +260,6 @@ def retrieve_streaming(query: str, tree: dict,
         # FIX 1: enrich content with tables before passing to LLM
         enriched_content = _enrich_node_content(node, source_file)
         decision = _call_json(
-            client,
             _explore_prompt(query, node, enriched_content, outline, chat_history, hop_log),
             max_tokens=600,
         )
@@ -294,7 +296,7 @@ def retrieve_streaming(query: str, tree: dict,
 
     # Phase 4: Stream answer
     prompt = _answer_prompt(query, collected, chat_history)
-    response = _call_streaming(client, prompt)
+    response = _call_streaming(prompt)
     for chunk in response:
         if chunk.text:
             yield {"type": "text", "content": chunk.text}
@@ -450,7 +452,7 @@ def _build_sources(collected: list) -> list:
 
 # ── Sync loop ─────────────────────────────────────────────────────────────────
 
-def _iterative_retrieve(client, query: str, tree: dict,
+def _iterative_retrieve(query: str, tree: dict,
                         chat_history: Optional[list],
                         source_file: str = None) -> dict:
     outline   = tree_to_outline(tree)
@@ -458,7 +460,7 @@ def _iterative_retrieve(client, query: str, tree: dict,
     visited   = set()
     collected = []
 
-    plan = _call_json(client, _plan_prompt(query, outline, chat_history), max_tokens=400)
+    plan = _call_json(_plan_prompt(query, outline, chat_history), max_tokens=400)
     hop_log.append({"hop": 0, "action": "PLAN",
                     "reasoning": plan.get("reasoning", ""),
                     "targets": plan.get("section_ids", [])})
@@ -477,7 +479,6 @@ def _iterative_retrieve(client, query: str, tree: dict,
 
         enriched_content = _enrich_node_content(node, source_file)
         decision = _call_json(
-            client,
             _explore_prompt(query, node, enriched_content, outline, chat_history, hop_log),
             max_tokens=600,
         )
@@ -509,23 +510,23 @@ def _iterative_retrieve(client, query: str, tree: dict,
         }
 
     return {
-        "answer": _generate_answer_sync(client, query, collected, chat_history),
+        "answer": _generate_answer_sync(query, collected, chat_history),
         "sources": _build_sources(collected),
         "retrieval_trace": hop_log,
     }
 
 
-def _generate_answer_sync(client, query: str, collected: list,
+def _generate_answer_sync(query: str, collected: list,
                           chat_history: Optional[list]) -> str:
     prompt = _answer_prompt(query, collected, chat_history)
+    client = _get_client()
+    cfg = types.GenerateContentConfig(temperature=0.15, max_output_tokens=2048)
     # FIX 2: use thread executor instead of asyncio.run inside FastAPI
     def _call():
-        model = client.GenerativeModel(ANSWER_MODEL)
-        resp = model.generate_content(
-            prompt,
-            generation_config={"temperature": 0.15, "max_output_tokens": 2048},
+        resp = client.models.generate_content(
+            model=ANSWER_MODEL, contents=prompt, config=cfg
         )
-        return resp.text.strip()
+        return (resp.text or "").strip()
 
     for attempt in range(_LLM_RETRIES):
         try:
