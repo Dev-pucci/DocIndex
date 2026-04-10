@@ -528,8 +528,9 @@
   async function selectDoc(id) {
     activeDoc = documents[id];
     chatHistory = [];
+    const welcomeEl = document.getElementById('welcome');
+    if (welcomeEl) welcomeEl.style.display = 'none';
     document.getElementById('messages').innerHTML = '';
-    document.getElementById('welcome').style.display = 'none';
 
     document.getElementById('chat-toolbar').innerHTML = `
       <span class="active-doc-badge">📄 ${activeDoc.title || activeDoc.filename}</span>
