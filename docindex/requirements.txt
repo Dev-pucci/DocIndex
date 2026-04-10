@@ -13,9 +13,8 @@ python-docx==1.1.2     # DOCX parsing
 # macOS:         brew install poppler tesseract
 Pillow==10.4.0         # Image handling
 
-# Google Vision OCR (optional fallback — better than Tesseract on complex scans)
-# Set GOOGLE_VISION_API_KEY or GOOGLE_APPLICATION_CREDENTIALS to enable
-# google-cloud-vision==3.7.2  # uncomment to install
+# Google Vision OCR — always-on, uses ADC in Cloud Run (no key needed)
+google-cloud-vision==3.7.2
 
 # Table extraction (required for PDF table parsing in retriever)
 pandas==2.2.3

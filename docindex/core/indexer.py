@@ -161,14 +161,14 @@ def _ocr_tesseract(img_path: str, lang: str = "eng") -> str:
 
 def _ocr_google_vision(img_path: str) -> str:
     """
-    OCR using Google Cloud Vision API (fallback for complex scanned docs).
-    Requires GOOGLE_APPLICATION_CREDENTIALS or API key in GOOGLE_VISION_API_KEY.
-    Falls back gracefully if not configured.
+    OCR using Google Cloud Vision API.
+    In Cloud Run, uses ADC (Application Default Credentials) automatically.
+    Optionally uses GOOGLE_VISION_API_KEY if set.
     """
     try:
         vision_key = os.environ.get("GOOGLE_VISION_API_KEY")
         if vision_key:
-            # REST API approach (no SDK needed)
+            # REST API with explicit key
             import urllib.request
             with open(img_path, "rb") as f:
                 img_data = base64.b64encode(f.read()).decode()
@@ -186,7 +186,7 @@ def _ocr_google_vision(img_path: str) -> str:
                 result = json.loads(resp.read())
             return result["responses"][0].get("fullTextAnnotation", {}).get("text", "")
         else:
-            # Try google-cloud-vision SDK
+            # Use google-cloud-vision SDK with ADC (works automatically in Cloud Run)
             from google.cloud import vision
             client = vision.ImageAnnotatorClient()
             with open(img_path, "rb") as f:
@@ -223,8 +223,8 @@ def _ocr_page(file_path: str, page_num: int) -> str:
     OCR a single page.
     Strategy:
       1. Render via Poppler (pdftoppm)
-      2. Try Tesseract (free, local)
-      3. If result is poor (<50 chars) AND Google Vision is configured → use Vision
+      2. Try Google Cloud Vision (superior accuracy for messy/handwritten text)
+      3. Fall back to Tesseract if Vision fails
     """
     import tempfile, shutil
     with tempfile.TemporaryDirectory() as tmp:
@@ -232,21 +232,19 @@ def _ocr_page(file_path: str, page_num: int) -> str:
         if not img_path:
             return f"[Page {page_num}: could not render — install poppler-utils]"
 
-        # Try Tesseract first
-        tesseract_text = ""
+        # Try Google Vision first (better accuracy, handles messy/handwritten text)
+        print(f"[indexer] Page {page_num}: running Google Cloud Vision OCR...")
+        vision_text = _ocr_google_vision(img_path)
+        if len(vision_text) > 30:
+            print(f"[indexer] Page {page_num}: Vision OCR got {len(vision_text)} chars")
+            return vision_text
+
+        # Fall back to Tesseract
+        print(f"[indexer] Page {page_num}: Vision weak ({len(vision_text)} chars), falling back to Tesseract...")
         if shutil.which("tesseract"):
-            tesseract_text = _ocr_tesseract(img_path)
+            return _ocr_tesseract(img_path)
 
-        # If Tesseract gives poor result and Vision is available, use Vision
-        vision_key = (os.environ.get("GOOGLE_VISION_API_KEY") or
-                      os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
-        if len(tesseract_text) < 50 and vision_key:
-            print(f"[indexer] Page {page_num}: Tesseract weak ({len(tesseract_text)} chars), trying Google Vision...")
-            vision_text = _ocr_google_vision(img_path)
-            if len(vision_text) > len(tesseract_text):
-                return vision_text
-
-        return tesseract_text
+        return vision_text
 
 
 # ── Production-hardened page extraction ──────────────────────────────────────
