@@ -1,0 +1,28 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+pydantic==2.9.2
+
+# Document parsing
+PyMuPDF==1.24.11       # PDF native text extraction
+python-docx==1.1.2     # DOCX parsing
+
+# OCR (scanned/legacy documents)
+# Requires system packages: poppler-utils tesseract-ocr
+# Ubuntu/Debian: sudo apt install poppler-utils tesseract-ocr tesseract-ocr-eng
+# macOS:         brew install poppler tesseract
+Pillow==10.4.0         # Image handling
+
+# Google Vision OCR (optional fallback — better than Tesseract on complex scans)
+# Set GOOGLE_VISION_API_KEY or GOOGLE_APPLICATION_CREDENTIALS to enable
+# google-cloud-vision==3.7.2  # uncomment to install
+
+# Table extraction (required for PDF table parsing in retriever)
+pandas==2.2.3
+
+# Google Gemini (cheap LLM)
+google-generativeai==0.8.3
+
+# Utilities
+python-dotenv==1.0.1
+httpx==0.27.2
