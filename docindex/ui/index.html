@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DocIndex — Document Intelligence</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f0f11;
+    --surface: #18181c;
+    --surface2: #222228;
+    --border: #2e2e38;
+    --accent: #6c63ff;
+    --accent-dim: #3d3880;
+    --text: #e8e8f0;
+    --text-dim: #888898;
+    --green: #22c55e;
+    --red: #ef4444;
+    --radius: 12px;
+    --font: 'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .logo {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--accent), #a78bfa);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 14px; color: white;
+  }
+  header h1 { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+  header span { font-size: 12px; color: var(--text-dim); margin-left: 4px; }
+
+  .api-bar {
+    margin-left: auto;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .api-bar input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    width: 260px;
+    font-family: monospace;
+  }
+  .api-bar input:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Layout ── */
+  .layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 280px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .sidebar-header h2 { font-size: 13px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* Drop zone */
+  .drop-zone {
+    margin: 12px;
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 20px 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(108, 99, 255, 0.06);
+  }
+  .drop-zone input[type="file"] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+  }
+  .drop-zone .icon { font-size: 24px; margin-bottom: 6px; }
+  .drop-zone p { font-size: 12px; color: var(--text-dim); }
+  .drop-zone p strong { color: var(--accent); }
+
+  .upload-progress {
+    margin: 0 12px;
+    display: none;
+  }
+  .progress-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.3s;
+    animation: indeterminate 1.4s infinite;
+  }
+  @keyframes indeterminate {
+    0% { transform: translateX(-100%); width: 50%; }
+    100% { transform: translateX(250%); width: 50%; }
+  }
+  .upload-status { font-size: 12px; color: var(--text-dim); }
+
+  /* Document list */
+  .doc-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .doc-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    position: relative;
+  }
+  .doc-item:hover { background: var(--surface2); }
+  .doc-item.active { background: var(--accent-dim); }
+  .doc-icon {
+    width: 32px; height: 32px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0;
+  }
+  .doc-icon.pdf { background: rgba(239,68,68,0.15); }
+  .doc-icon.docx { background: rgba(59,130,246,0.15); }
+  .doc-icon.txt { background: rgba(34,197,94,0.15); }
+  .doc-info { flex: 1; min-width: 0; }
+  .doc-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .doc-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .doc-delete {
+    opacity: 0; transition: opacity 0.15s;
+    background: none; border: none; color: var(--red);
+    cursor: pointer; font-size: 14px; padding: 2px;
+    flex-shrink: 0;
+  }
+  .doc-item:hover .doc-delete { opacity: 1; }
+  .empty-docs {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  /* ── Chat area ── */
+  .chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .chat-toolbar {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .active-doc-badge {
+    background: var(--accent-dim);
+    color: #a78bfa;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .no-doc-msg { color: var(--text-dim); font-size: 13px; }
+
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .msg {
+    display: flex;
+    gap: 10px;
+    max-width: 800px;
+  }
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .msg.assistant { align-self: flex-start; }
+
+  .msg-avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .msg.user .msg-avatar { background: var(--accent); }
+  .msg.assistant .msg-avatar { background: var(--surface2); border: 1px solid var(--border); }
+
+  .msg-body { display: flex; flex-direction: column; gap: 6px; }
+  .msg-bubble {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .msg.user .msg-bubble {
+    background: var(--accent);
+    color: white;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.assistant .msg-bubble {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+    white-space: pre-wrap;
+  }
+  .msg-bubble.streaming::after {
+    content: '▋';
+    animation: blink 0.7s infinite;
+    margin-left: 2px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* Sources */
+  .msg-sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .source-chip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .source-chip span { color: var(--accent); }
+
+  /* Hop trace */
+  .hop-trace {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 12px;
+  }
+  .hop-trace summary {
+    padding: 6px 12px;
+    cursor: pointer;
+    color: var(--text-dim);
+    background: var(--surface);
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .hop-trace summary::-webkit-details-marker { display: none; }
+  .hop-trace summary::before { content: '▶'; font-size: 9px; transition: transform 0.2s; }
+  .hop-trace[open] summary::before { transform: rotate(90deg); }
+  .hop-list { padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .hop-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 4px 0; border-bottom: 1px solid var(--border);
+  }
+  .hop-item:last-child { border-bottom: none; }
+  .hop-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+    flex-shrink: 0; min-width: 64px; text-align: center;
+  }
+  .hop-badge.PLAN     { background: rgba(108,99,255,0.2); color: #a78bfa; }
+  .hop-badge.ANSWER   { background: rgba(34,197,94,0.2);  color: #86efac; }
+  .hop-badge.COLLECT  { background: rgba(234,179,8,0.2);  color: #fde047; }
+  .hop-badge.DEEPER   { background: rgba(59,130,246,0.2); color: #93c5fd; }
+  .hop-badge.SIBLING  { background: rgba(249,115,22,0.2); color: #fdba74; }
+  .hop-badge.BACKTRACK{ background: rgba(239,68,68,0.2);  color: #fca5a5; }
+  .hop-text { color: var(--text-dim); line-height: 1.4; }
+  .hop-text strong { color: var(--text); }
+
+  /* Welcome screen */
+  .welcome {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--text-dim);
+    text-align: center;
+    padding: 40px;
+  }
+  .welcome .big-icon { font-size: 48px; }
+  .welcome h2 { font-size: 20px; font-weight: 700; color: var(--text); }
+  .welcome p { font-size: 14px; max-width: 360px; line-height: 1.6; }
+  .suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 8px;
+  }
+  .suggestion-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .suggestion-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Input area */
+  .input-area {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .input-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    transition: border-color 0.2s;
+  }
+  .input-row:focus-within { border-color: var(--accent); }
+  #chat-input {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 14px;
+    font-family: var(--font);
+    resize: none;
+    outline: none;
+    max-height: 120px;
+    line-height: 1.5;
+  }
+  #chat-input::placeholder { color: var(--text-dim); }
+  #send-btn {
+    background: var(--accent);
+    border: none;
+    color: white;
+    width: 34px; height: 34px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: opacity 0.2s;
+  }
+  #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .input-hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; text-align: center; }
+
+  /* API not configured warning */
+  .config-warning {
+    background: rgba(239,68,68,0.1);
+    border: 1px solid rgba(239,68,68,0.3);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #fca5a5;
+    margin: 12px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">D</div>
+  <h1>DocIndex <span>— Reasoning RAG</span></h1>
+  <div class="api-bar">
+    <input type="text" id="api-url-input" placeholder="API URL: http://localhost:8000" value="http://localhost:8000">
+    <input type="text" id="gemini-key-input" placeholder="Gemini API Key (optional)" style="width:180px">
+  </div>
+</header>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>Documents</h2>
+    </div>
+
+    <div class="drop-zone" id="drop-zone">
+      <input type="file" id="file-input" accept=".pdf,.docx,.doc,.txt" multiple>
+      <div class="icon">📄</div>
+      <p><strong>Drop files here</strong><br>PDF, DOCX, TXT</p>
+    </div>
+
+    <div class="upload-progress" id="upload-progress">
+      <div class="upload-status" id="upload-status">Indexing document...</div>
+      <div class="progress-bar"><div class="progress-fill"></div></div>
+    </div>
+
+    <div class="doc-list" id="doc-list">
+      <div class="empty-docs">No documents yet.<br>Upload one to get started.</div>
+    </div>
+  </aside>
+
+  <!-- Chat area -->
+  <main class="chat-area">
+    <div class="chat-toolbar" id="chat-toolbar">
+      <span class="no-doc-msg">← Select or upload a document</span>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="welcome" id="welcome">
+        <div class="big-icon">🧠</div>
+        <h2>Human-like Document Intelligence</h2>
+        <p>Upload any document and ask questions. No vector search — pure reasoning over document structure.</p>
+        <div class="suggestions" id="suggestions" style="display:none">
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">Summarize this document</button>
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the key findings?</button>
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">List the main sections</button>
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">What risks are mentioned?</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-row">
+        <textarea id="chat-input" rows="1" placeholder="Ask anything about your document..." disabled></textarea>
+        <button id="send-btn" disabled onclick="sendMessage()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z"/>
+          </svg>
+        </button>
+      </div>
+      <div class="input-hint">Powered by Gemini Flash · Reasoning-based retrieval · No vector DB</div>
+    </div>
+  </main>
+</div>
+
+<script>
+  let activeDoc = null;
+  let chatHistory = [];
+  let documents = {};
+
+  const API_URL = () => document.getElementById('api-url-input').value.trim().replace(/\/$/, '');
+
+  // ── Document Management ──────────────────────────────────────
+
+  async function loadDocuments() {
+    try {
+      const res = await fetch(`${API_URL()}/documents`);
+      const data = await res.json();
+      documents = {};
+      data.documents.forEach(d => documents[d.id] = d);
+      renderDocList();
+    } catch (e) {
+      // API not reachable yet
+    }
+  }
+
+  function renderDocList() {
+    const list = document.getElementById('doc-list');
+    const docs = Object.values(documents);
+    if (!docs.length) {
+      list.innerHTML = '<div class="empty-docs">No documents yet.<br>Upload one to get started.</div>';
+      return;
+    }
+
+    const icons = { pdf: '📕', docx: '📘', doc: '📘', txt: '📄' };
+    list.innerHTML = docs.map(d => `
+      <div class="doc-item ${activeDoc?.id === d.id ? 'active' : ''}" onclick="selectDoc('${d.id}')">
+        <div class="doc-icon ${d.type}">${icons[d.type] || '📄'}</div>
+        <div class="doc-info">
+          <div class="doc-name" title="${d.filename}">${d.title || d.filename}</div>
+          <div class="doc-meta">${d.type?.toUpperCase()} · ${d.sections || 0} sections${d.total_pages ? ` · ${d.total_pages} pages` : ''}</div>
+        </div>
+        <button class="doc-delete" onclick="event.stopPropagation(); deleteDoc('${d.id}')" title="Delete">✕</button>
+      </div>
+    `).join('');
+  }
+
+  async function selectDoc(id) {
+    activeDoc = documents[id];
+    chatHistory = [];
+    document.getElementById('messages').innerHTML = '';
+    document.getElementById('welcome').style.display = 'none';
+
+    document.getElementById('chat-toolbar').innerHTML = `
+      <span class="active-doc-badge">📄 ${activeDoc.title || activeDoc.filename}</span>
+      <span style="color:var(--text-dim);font-size:12px">${activeDoc.sections} sections${activeDoc.total_pages ? ` · ${activeDoc.total_pages} pages` : ''}</span>
+    `;
+
+    document.getElementById('chat-input').disabled = false;
+    document.getElementById('send-btn').disabled = false;
+    document.getElementById('chat-input').placeholder = `Ask about "${activeDoc.title || activeDoc.filename}"...`;
+
+    // Show suggestions
+    const welcome = document.createElement('div');
+    welcome.className = 'welcome';
+    welcome.innerHTML = `
+      <div class="big-icon">📄</div>
+      <h2>${activeDoc.title || activeDoc.filename}</h2>
+      <p>Document indexed and ready. Ask me anything about it.</p>
+      <div class="suggestions">
+        <button class="suggestion-btn" onclick="sendSuggestion(this)">Summarize this document</button>
+        <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the key sections?</button>
+        <button class="suggestion-btn" onclick="sendSuggestion(this)">List the main topics covered</button>
+        <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the most important findings?</button>
+      </div>
+    `;
+    document.getElementById('messages').appendChild(welcome);
+    renderDocList();
+  }
+
+  async function deleteDoc(id) {
+    if (!confirm('Delete this document?')) return;
+    await fetch(`${API_URL()}/documents/${id}`, { method: 'DELETE' });
+    if (activeDoc?.id === id) {
+      activeDoc = null;
+      resetChat();
+    }
+    await loadDocuments();
+  }
+
+  function resetChat() {
+    chatHistory = [];
+    document.getElementById('messages').innerHTML = '';
+    document.getElementById('chat-toolbar').innerHTML = '<span class="no-doc-msg">← Select or upload a document</span>';
+    document.getElementById('chat-input').disabled = true;
+    document.getElementById('send-btn').disabled = true;
+  }
+
+  // ── Upload ────────────────────────────────────────────────────
+
+  document.getElementById('file-input').addEventListener('change', async (e) => {
+    for (const file of e.target.files) await uploadFile(file);
+    e.target.value = '';
+  });
+
+  const dropZone = document.getElementById('drop-zone');
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    for (const file of e.dataTransfer.files) await uploadFile(file);
+  });
+
+  async function uploadFile(file) {
+    const progress = document.getElementById('upload-progress');
+    const status = document.getElementById('upload-status');
+    progress.style.display = 'block';
+    status.textContent = `Indexing ${file.name}...`;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch(`${API_URL()}/documents/upload`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Upload failed');
+      status.textContent = `✓ ${data.title} indexed (${data.sections} sections)`;
+      setTimeout(() => progress.style.display = 'none', 2000);
+      await loadDocuments();
+      selectDoc(data.document_id);
+    } catch (e) {
+      status.textContent = `✗ Error: ${e.message}`;
+      setTimeout(() => progress.style.display = 'none', 3000);
+    }
+  }
+
+  // ── Chat ──────────────────────────────────────────────────────
+
+  function sendSuggestion(btn) { sendMessage(btn.textContent); }
+
+  async function sendMessage(text = null) {
+    const input = document.getElementById('chat-input');
+    const query = text || input.value.trim();
+    if (!query || !activeDoc) return;
+
+    input.value = '';
+    input.style.height = 'auto';
+
+    // Remove welcome screen
+    const welcome = document.querySelector('.messages .welcome');
+    if (welcome) welcome.remove();
+
+    // Add user message
+    appendMessage('user', query);
+    chatHistory.push({ role: 'user', content: query });
+
+    // Add assistant placeholder
+    const assistantMsg = appendMessage('assistant', '', true);
+    const bubble = assistantMsg.querySelector('.msg-bubble');
+    bubble.classList.add('streaming');
+
+    document.getElementById('send-btn').disabled = true;
+    input.disabled = true;
+
+    try {
+      const res = await fetch(`${API_URL()}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          document_id: activeDoc.id,
+          query,
+          chat_history: chatHistory.slice(-10),
+          stream: true
+        })
+      });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let fullAnswer = '';
+      let sources = [];
+      let hops = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = decoder.decode(value);
+        const lines = text.split('\n');
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
+          if (data === '[DONE]') break;
+
+          try {
+            const chunk = JSON.parse(data);
+            if (chunk.type === 'text') {
+              fullAnswer += chunk.content;
+              bubble.textContent = fullAnswer;
+              scrollToBottom();
+            } else if (chunk.type === 'sources') {
+              sources = chunk.content;
+            } else if (chunk.type === 'hop') {
+              hops.push(chunk.content);
+            }
+          } catch (e) {}
+        }
+      }
+
+      bubble.classList.remove('streaming');
+      chatHistory.push({ role: 'assistant', content: fullAnswer });
+
+      // Render sources
+      if (sources.length) {
+        const sourcesEl = document.createElement('div');
+        sourcesEl.className = 'msg-sources';
+        sourcesEl.innerHTML = sources.map(s =>
+          `<div class="source-chip">📄 ${s.title}${s.page ? ` <span>p.${s.page}</span>` : ''}</div>`
+        ).join('');
+        assistantMsg.querySelector('.msg-body').appendChild(sourcesEl);
+      }
+
+      // Render hop trace (collapsible)
+      if (hops.length) {
+        const traceEl = document.createElement('details');
+        traceEl.className = 'hop-trace';
+        const actionCounts = hops.reduce((a,h) => { a[h.action]=(a[h.action]||0)+1; return a; }, {});
+        const summary = Object.entries(actionCounts).map(([k,v])=>`${v}×${k}`).join(' · ');
+        traceEl.innerHTML = `<summary>🔍 Retrieval trace — ${hops.length} hops (${summary})</summary>
+          <div class="hop-list">${hops.map(h => `
+            <div class="hop-item">
+              <span class="hop-badge ${h.action}">${h.action}</span>
+              <span class="hop-text">
+                ${h.action === 'PLAN'
+                  ? `<strong>Starting points:</strong> ${(h.targets||[]).join(', ') || 'none'} — ${h.reasoning||''}`
+                  : `<strong>${h.node_title||''}</strong> — ${h.reasoning||''}`
+                }
+              </span>
+            </div>`).join('')}
+          </div>`;
+        assistantMsg.querySelector('.msg-body').appendChild(traceEl);
+      }
+
+    } catch (e) {
+      bubble.classList.remove('streaming');
+      bubble.textContent = `Error: ${e.message}. Make sure the API server is running.`;
+    }
+
+    document.getElementById('send-btn').disabled = false;
+    input.disabled = false;
+    input.focus();
+    scrollToBottom();
+  }
+
+  function appendMessage(role, content, empty = false) {
+    const messages = document.getElementById('messages');
+    const msg = document.createElement('div');
+    msg.className = `msg ${role}`;
+    msg.innerHTML = `
+      <div class="msg-avatar">${role === 'user' ? 'U' : '🧠'}</div>
+      <div class="msg-body">
+        <div class="msg-bubble">${empty ? '' : content}</div>
+      </div>
+    `;
+    messages.appendChild(msg);
+    scrollToBottom();
+    return msg;
+  }
+
+  function scrollToBottom() {
+    const m = document.getElementById('messages');
+    m.scrollTop = m.scrollHeight;
+  }
+
+  // ── Input auto-resize ─────────────────────────────────────────
+  document.getElementById('chat-input').addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+  });
+
+  document.getElementById('chat-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  // ── Init ──────────────────────────────────────────────────────
+  loadDocuments();
+  setInterval(loadDocuments, 30000);
+</script>
+</body>
+</html>
