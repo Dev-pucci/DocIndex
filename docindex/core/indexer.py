@@ -37,14 +37,17 @@ from google.genai import types
 
 # ── Model config ──────────────────────────────────────────────────────────────
 
-INDEXER_MODEL   = os.environ.get("INDEXER_MODEL",   "gemini-2.5-pro")
+INDEXER_MODEL   = os.environ.get("INDEXER_MODEL",   "gemini-2.5-flash")
 RETRIEVAL_MODEL = os.environ.get("RETRIEVAL_MODEL", "gemini-2.5-flash")
 
+# Client config: prefer API key (higher quota, simpler auth) over Vertex AI.
+GEMINI_API_KEY  = os.environ.get("GEMINI_API_KEY")
 VERTEX_PROJECT  = os.environ.get("VERTEX_PROJECT",  "docindex-prod")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 
-MAX_RETRIES    = 4
-RETRY_BASE     = 1.5   # seconds, exponential backoff
+MAX_RETRIES    = 6
+RETRY_BASE     = 2.0   # seconds, exponential backoff
+RATE_LIMIT_WAIT = 30   # seconds to wait on 429 rate limit
 MAX_TOKENS_PER_NODE = 20_000   # mirrors PageIndex default
 MAX_PAGES_PER_NODE  = 10       # mirrors PageIndex default
 TOC_CHECK_PAGES     = 20       # pages to scan for TOC
@@ -54,9 +57,12 @@ _genai_client = None
 def _get_client():
     global _genai_client
     if _genai_client is None:
-        _genai_client = genai.Client(
-            vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION
-        )
+        if GEMINI_API_KEY:
+            _genai_client = genai.Client(api_key=GEMINI_API_KEY)
+        else:
+            _genai_client = genai.Client(
+                vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION
+            )
     return _genai_client
 
 
@@ -66,7 +72,11 @@ async def _llm_async(prompt: str, model_name: str = INDEXER_MODEL,
                      temperature: float = 0.1, max_tokens: int = 4096) -> str:
     """Async LLM call with exponential backoff retry."""
     client = _get_client()
-    cfg = types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_tokens)
+    cfg = types.GenerateContentConfig(
+        temperature=temperature,
+        max_output_tokens=max_tokens,
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
+    )
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -81,8 +91,13 @@ async def _llm_async(prompt: str, model_name: str = INDEXER_MODEL,
         except Exception as e:
             if attempt == MAX_RETRIES - 1:
                 raise
-            wait = RETRY_BASE ** attempt
-            print(f"[indexer] LLM error (attempt {attempt+1}): {e}. Retrying in {wait:.1f}s...")
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                wait = RATE_LIMIT_WAIT
+                print(f"[indexer] Rate limit hit (attempt {attempt+1}). Waiting {wait}s...")
+            else:
+                wait = RETRY_BASE ** attempt
+                print(f"[indexer] LLM error (attempt {attempt+1}): {e}. Retrying in {wait:.1f}s...")
             await asyncio.sleep(wait)
     return ""
 
@@ -91,7 +106,11 @@ def _llm_sync(prompt: str, model_name: str = INDEXER_MODEL,
               temperature: float = 0.1, max_tokens: int = 4096) -> str:
     """Synchronous LLM call with retry."""
     client = _get_client()
-    cfg = types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_tokens)
+    cfg = types.GenerateContentConfig(
+        temperature=temperature,
+        max_output_tokens=max_tokens,
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
+    )
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -102,7 +121,12 @@ def _llm_sync(prompt: str, model_name: str = INDEXER_MODEL,
         except Exception as e:
             if attempt == MAX_RETRIES - 1:
                 raise
-            wait = RETRY_BASE ** attempt
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                wait = RATE_LIMIT_WAIT
+                print(f"[indexer] Rate limit hit (attempt {attempt+1}). Waiting {wait}s...")
+            else:
+                wait = RETRY_BASE ** attempt
             time.sleep(wait)
     return ""
 
@@ -541,7 +565,9 @@ Given text:
 
     first_text = pages_to_tagged_text(groups[0])
     resp = await _llm_async(init_prompt + first_text, max_tokens=8192)
+    print(f"[indexer] generate_toc raw response ({len(resp)} chars): {resp[:300]!r}")
     toc = _extract_json(resp)
+    print(f"[indexer] generate_toc parsed: {type(toc).__name__}, len={len(toc) if isinstance(toc, list) else 'N/A'}")
     if not isinstance(toc, list):
         toc = []
 
@@ -843,6 +869,7 @@ async def _build_index_async(
         print("[indexer] No TOC found — generating from raw text...")
         flat_toc = await generate_toc_from_text(pages)
 
+    print(f"[indexer] flat_toc before filter ({len(flat_toc)} entries): {flat_toc[:3]}")
     flat_toc = [e for e in flat_toc if e.get("physical_index") is not None]
     print(f"[indexer] {len(flat_toc)} valid TOC entries after filtering")
 

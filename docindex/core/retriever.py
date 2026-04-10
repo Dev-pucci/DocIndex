@@ -24,6 +24,7 @@ from core.parser import tree_to_outline, get_node_by_id, _get_node_id, _get_page
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
+GEMINI_API_KEY  = os.environ.get("GEMINI_API_KEY")
 VERTEX_PROJECT  = os.environ.get("VERTEX_PROJECT",  "docindex-prod")
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 
@@ -35,15 +36,19 @@ _genai_client = None
 def _get_client():
     global _genai_client
     if _genai_client is None:
-        _genai_client = genai.Client(
-            vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION
-        )
+        if GEMINI_API_KEY:
+            _genai_client = genai.Client(api_key=GEMINI_API_KEY)
+        else:
+            _genai_client = genai.Client(
+                vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION
+            )
     return _genai_client
 
 MAX_HOPS       = 6
 MAX_NODES_READ = 10
-_LLM_RETRIES   = 4
-_LLM_BACKOFF   = 1.5   # seconds base
+_LLM_RETRIES   = 6
+_LLM_BACKOFF   = 2.0   # seconds base
+_RATE_LIMIT_WAIT = 30  # seconds to wait on 429
 
 
 # ── FIX 5: _call_json with retry ─────────────────────────────────────────────
@@ -57,7 +62,11 @@ def _call_json(prompt: str, max_tokens: int = 600,
     Returns {} only if all retries exhausted.
     """
     client = _get_client()
-    cfg = types.GenerateContentConfig(temperature=0.1, max_output_tokens=max_tokens)
+    cfg = types.GenerateContentConfig(
+        temperature=0.1,
+        max_output_tokens=max_tokens,
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
+    )
     last_exc = None
 
     for attempt in range(_LLM_RETRIES):
@@ -84,7 +93,12 @@ def _call_json(prompt: str, max_tokens: int = 600,
         except Exception as e:
             last_exc = e
             if attempt < _LLM_RETRIES - 1:
-                wait = _LLM_BACKOFF ** attempt
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    wait = _RATE_LIMIT_WAIT
+                    print(f"[retriever] Rate limit (attempt {attempt+1}). Waiting {wait}s...")
+                else:
+                    wait = _LLM_BACKOFF ** attempt
                 time.sleep(wait)
 
     print(f"[retriever] _call_json failed after {_LLM_RETRIES} attempts: {last_exc}")
