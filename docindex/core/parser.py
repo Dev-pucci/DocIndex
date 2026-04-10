@@ -12,6 +12,7 @@ Mixed documents (some native, some scanned) are handled page-by-page.
 """
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -19,6 +20,18 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 import hashlib
+
+from dotenv import load_dotenv
+load_dotenv()
+
+# Inject Poppler and Tesseract paths from .env into PATH so shutil.which finds them
+_poppler_path = os.getenv("POPPLER_PATH", "")
+_tesseract_cmd = os.getenv("TESSERACT_CMD", "")
+if _poppler_path and os.path.isdir(_poppler_path):
+    os.environ["PATH"] = _poppler_path + os.pathsep + os.environ.get("PATH", "")
+if _tesseract_cmd and os.path.isfile(_tesseract_cmd):
+    _tesseract_dir = str(Path(_tesseract_cmd).parent)
+    os.environ["PATH"] = _tesseract_dir + os.pathsep + os.environ.get("PATH", "")
 
 # A page with fewer than this many characters is considered scanned/image-only
 MIN_CHARS_PER_PAGE = 50
