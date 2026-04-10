@@ -304,8 +304,10 @@ def extract_pages(file_path: str) -> list:
                           "Results may be less accurate.")
                     rtl_warning_shown = True
 
-            # Scanned page detection
-            if len(text) < 50:
+            # Scanned page detection — use OCR if text is suspiciously short.
+            # Threshold of 200 chars catches pages where only a header/footer
+            # was extracted (e.g. DocuSign envelope ID) but body is image-based.
+            if len(text) < 200:
                 if ocr_available:
                     text = _ocr_page(file_path, i)
                 elif not text:
