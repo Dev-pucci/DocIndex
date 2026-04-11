@@ -903,6 +903,13 @@ async def _build_index_async(
     # Step 8: Attach raw content
     attach_content(tree_nodes, pages)
 
+    # Step 9: Signature block reconciliation
+    # Extract clean party names from the last page (signature block) and inject
+    # into root metadata so retrieval always has the correct entity names.
+    parties = await _extract_parties_from_signature(pages)
+    if parties:
+        print(f"[indexer] Signature block parties: {parties}")
+
     root = {
         "title": filename,
         "source": file_path,
@@ -910,10 +917,45 @@ async def _build_index_async(
         "total_pages": total_pages,
         "nodes": tree_nodes,
         "children": tree_nodes,  # compatibility with heuristic parser schema
+        "parties": parties,      # clean party names from signature block
     }
 
     print(f"[indexer] Done. {len(tree_nodes)} top-level sections.")
     return root
+
+
+async def _extract_parties_from_signature(pages: list) -> list:
+    """
+    Extract party names from the last 1-2 pages (signature block).
+    These are typically printed clearly even in scanned docs, providing
+    a reliable ground truth to reconcile garbled preamble text.
+    """
+    if not pages:
+        return []
+    # Check last 2 pages for signature block
+    sig_pages = pages[-2:] if len(pages) >= 2 else pages[-1:]
+    sig_text = "\n".join(text for text, _ in sig_pages)
+
+    prompt = f"""Extract the names of all parties (companies or individuals) who signed this document.
+Look for signature blocks, lines labelled "By:", "Name:", "Company:", or printed names near signature lines.
+
+Return JSON array of party names only:
+["Party One Name", "Party Two Name"]
+
+If no parties found, return [].
+Directly return JSON only.
+
+Signature block text:
+{sig_text[:3000]}"""
+
+    try:
+        resp = await _llm_async(prompt, model_name=RETRIEVAL_MODEL, max_tokens=200)
+        result = _extract_json(resp)
+        if isinstance(result, list):
+            return [p for p in result if isinstance(p, str) and p.strip()]
+    except Exception as e:
+        print(f"[indexer] Signature extraction failed: {e}")
+    return []
 
 
 def build_index(

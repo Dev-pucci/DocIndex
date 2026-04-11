@@ -246,6 +246,7 @@ def retrieve_streaming(query: str, tree: dict,
     Yields: hop events, sources, then streamed answer text chunks.
     """
     outline = tree_to_outline(tree)
+    parties = tree.get("parties") or []
     hop_log = []
     visited = set()
     collected = []   # [(node, [passage_strings])]
@@ -309,7 +310,7 @@ def retrieve_streaming(query: str, tree: dict,
     yield {"type": "sources", "content": _build_sources(collected)}
 
     # Phase 4: Stream answer
-    prompt = _answer_prompt(query, collected, chat_history)
+    prompt = _answer_prompt(query, collected, chat_history, parties)
     response = _call_streaming(prompt)
     for chunk in response:
         if chunk.text:
@@ -387,7 +388,8 @@ def _explore_prompt(query: str, node: dict, enriched_content: str,
     )
 
 
-def _answer_prompt(query: str, collected: list, chat_history: Optional[list]) -> str:
+def _answer_prompt(query: str, collected: list, chat_history: Optional[list],
+                   parties: Optional[list] = None) -> str:
     history_ctx = _format_history(chat_history, turns=4)
     context_parts = []
     for node, passages in collected:
@@ -398,14 +400,23 @@ def _answer_prompt(query: str, collected: list, chat_history: Optional[list]) ->
             "\n".join(f"• {p}" for p in passages)
         )
     context = "\n\n".join(context_parts)
+    parties_ctx = ""
+    if parties:
+        parties_ctx = (
+            f"Document parties (verified from signature block — use these exact names):\n"
+            + "\n".join(f"  - {p}" for p in parties)
+            + "\n\n"
+        )
     return (
         f"You are a precise document analyst. Answer ONLY using the retrieved passages below.\n"
+        f"{parties_ctx}"
         f"{history_ctx}\n"
         f"Retrieved passages:\n{context}\n\n"
         f"Question: {query}\n\n"
         f"Instructions:\n"
         f"- Answer directly and precisely\n"
         f"- Cite section titles and page numbers\n"
+        f"- Use the verified party names above when referring to signatories\n"
         f"- If passages only partially answer the question, say so clearly\n"
         f"- Use structured formatting (bullet points, numbered lists) where helpful"
     )
@@ -470,6 +481,7 @@ def _iterative_retrieve(query: str, tree: dict,
                         chat_history: Optional[list],
                         source_file: str = None) -> dict:
     outline   = tree_to_outline(tree)
+    parties   = tree.get("parties") or []
     hop_log   = []
     visited   = set()
     collected = []
@@ -524,15 +536,16 @@ def _iterative_retrieve(query: str, tree: dict,
         }
 
     return {
-        "answer": _generate_answer_sync(query, collected, chat_history),
+        "answer": _generate_answer_sync(query, collected, chat_history, parties),
         "sources": _build_sources(collected),
         "retrieval_trace": hop_log,
     }
 
 
 def _generate_answer_sync(query: str, collected: list,
-                          chat_history: Optional[list]) -> str:
-    prompt = _answer_prompt(query, collected, chat_history)
+                          chat_history: Optional[list],
+                          parties: Optional[list] = None) -> str:
+    prompt = _answer_prompt(query, collected, chat_history, parties)
     client = _get_client()
     cfg = types.GenerateContentConfig(temperature=0.15, max_output_tokens=2048)
     # FIX 2: use thread executor instead of asyncio.run inside FastAPI
