@@ -589,7 +589,8 @@
     row.style.cssText = 'font-size:12px;color:var(--text-dim);margin:2px 0;';
     progress.appendChild(row);
 
-    // Chain onto queue — each file waits for the previous to finish
+    // Chain onto queue — each file waits for the previous to finish.
+    // Always resolves (never rejects) so the chain never breaks.
     _uploadQueue = _uploadQueue.then(async () => {
       row.textContent = `⏳ ${file.name} — indexing...`;
       const formData = new FormData();
@@ -600,8 +601,7 @@
         if (!res.ok) throw new Error(data.detail || 'Upload failed');
         row.textContent = `✓ ${file.name} — ${data.sections} sections`;
         row.style.color = 'var(--green)';
-        await loadDocuments();
-        selectDoc(data.document_id);
+        try { await loadDocuments(); selectDoc(data.document_id); } catch (_) {}
       } catch (e) {
         row.textContent = `✗ ${file.name} — ${e.message}`;
         row.style.color = 'var(--red)';
@@ -609,7 +609,7 @@
       await new Promise(r => setTimeout(r, 2000));
       row.remove();
       if (!progress.querySelector('div')) progress.style.display = 'none';
-    });
+    }).catch(() => {}); // never let the chain break
   }
 
   document.getElementById('file-input').addEventListener('change', (e) => {
