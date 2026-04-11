@@ -592,23 +592,41 @@
     // Chain onto queue — each file waits for the previous to finish.
     // Always resolves (never rejects) so the chain never breaks.
     _uploadQueue = _uploadQueue.then(async () => {
-      row.textContent = `⏳ ${file.name} — indexing...`;
+      row.textContent = `⏳ ${file.name} — uploading...`;
       console.log('[upload] starting', file.name);
       const formData = new FormData();
       formData.append('file', file);
       try {
+        // Upload returns immediately with document_id
         const res = await fetch(`${API_URL()}/documents/upload`, { method: 'POST', body: formData });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Upload failed');
-        row.textContent = `✓ ${file.name} — ${data.sections} sections`;
-        row.style.color = 'var(--green)';
-        try { await loadDocuments(); selectDoc(data.document_id); } catch (_) {}
+        const docId = data.document_id;
+        row.textContent = `⏳ ${file.name} — indexing...`;
+        await loadDocuments();
+
+        // Poll status until ready or error
+        while (true) {
+          await new Promise(r => setTimeout(r, 5000));
+          const sr = await fetch(`${API_URL()}/documents/${docId}/status`);
+          const s = await sr.json();
+          if (s.status === 'ready') {
+            row.textContent = `✓ ${file.name} — ${s.sections} sections`;
+            row.style.color = 'var(--green)';
+            await loadDocuments();
+            selectDoc(docId);
+            break;
+          } else if (s.status && s.status.startsWith('error')) {
+            throw new Error(s.status);
+          }
+          row.textContent = `⏳ ${file.name} — indexing...`;
+        }
       } catch (e) {
         row.textContent = `✗ ${file.name} — ${e.message || e}`;
         row.style.color = 'var(--red)';
         console.error('Upload error for', file.name, e);
       }
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 3000));
       row.remove();
       if (!progress.querySelector('div')) progress.style.display = 'none';
     }).catch(() => {}); // never let the chain break
