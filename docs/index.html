@@ -593,6 +593,7 @@
     // Always resolves (never rejects) so the chain never breaks.
     _uploadQueue = _uploadQueue.then(async () => {
       row.textContent = `⏳ ${file.name} — indexing...`;
+      console.log('[upload] starting', file.name);
       const formData = new FormData();
       formData.append('file', file);
       try {
@@ -603,8 +604,9 @@
         row.style.color = 'var(--green)';
         try { await loadDocuments(); selectDoc(data.document_id); } catch (_) {}
       } catch (e) {
-        row.textContent = `✗ ${file.name} — ${e.message}`;
+        row.textContent = `✗ ${file.name} — ${e.message || e}`;
         row.style.color = 'var(--red)';
+        console.error('Upload error for', file.name, e);
       }
       await new Promise(r => setTimeout(r, 2000));
       row.remove();
