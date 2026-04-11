@@ -236,7 +236,7 @@ def _ocr_page(file_path: str, page_num: int) -> str:
         print(f"[indexer] Page {page_num}: running Google Cloud Vision OCR...")
         vision_text = _ocr_google_vision(img_path)
         if len(vision_text) > 30:
-            print(f"[indexer] Page {page_num}: Vision OCR got {len(vision_text)} chars")
+            print(f"[indexer] Page {page_num}: Vision OCR got {len(vision_text)} chars: {vision_text[:300]!r}")
             return vision_text
 
         # Fall back to Tesseract
@@ -907,8 +907,7 @@ async def _build_index_async(
     # Extract clean party names from the last page (signature block) and inject
     # into root metadata so retrieval always has the correct entity names.
     parties = await _extract_parties_from_signature(pages)
-    if parties:
-        print(f"[indexer] Signature block parties: {parties}")
+    print(f"[indexer] Signature block parties: {parties}")
 
     root = {
         "title": filename,
