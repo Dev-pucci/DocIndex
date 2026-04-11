@@ -576,56 +576,55 @@
 
   // ── Upload ────────────────────────────────────────────────────
 
-  document.getElementById('file-input').addEventListener('change', async (e) => {
-    await Promise.all([...e.target.files].map(f => uploadFile(f)));
+  // Upload queue — files are indexed one at a time to avoid rate limit collisions
+  let _uploadQueue = Promise.resolve();
+
+  function queueUpload(file) {
+    const progress = document.getElementById('upload-progress');
+    progress.style.display = 'block';
+
+    // Create status row immediately so user sees all queued files
+    const row = document.createElement('div');
+    row.textContent = `⏳ ${file.name}`;
+    row.style.cssText = 'font-size:12px;color:var(--text-dim);margin:2px 0;';
+    progress.appendChild(row);
+
+    // Chain onto queue — each file waits for the previous to finish
+    _uploadQueue = _uploadQueue.then(async () => {
+      row.textContent = `⏳ ${file.name} — indexing...`;
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await fetch(`${API_URL()}/documents/upload`, { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Upload failed');
+        row.textContent = `✓ ${file.name} — ${data.sections} sections`;
+        row.style.color = 'var(--green)';
+        await loadDocuments();
+        selectDoc(data.document_id);
+      } catch (e) {
+        row.textContent = `✗ ${file.name} — ${e.message}`;
+        row.style.color = 'var(--red)';
+      }
+      await new Promise(r => setTimeout(r, 2000));
+      row.remove();
+      if (!progress.querySelector('div')) progress.style.display = 'none';
+    });
+  }
+
+  document.getElementById('file-input').addEventListener('change', (e) => {
+    [...e.target.files].forEach(f => queueUpload(f));
     e.target.value = '';
   });
 
   const dropZone = document.getElementById('drop-zone');
   dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-  dropZone.addEventListener('drop', async (e) => {
+  dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    await Promise.all([...e.dataTransfer.files].map(f => uploadFile(f)));
+    [...e.dataTransfer.files].forEach(f => queueUpload(f));
   });
-
-  // Track per-file upload status rows
-  const _uploadRows = {};
-
-  async function uploadFile(file) {
-    const progress = document.getElementById('upload-progress');
-    progress.style.display = 'block';
-
-    // Create a dedicated status line for this file
-    const row = document.createElement('div');
-    row.textContent = `⏳ ${file.name}...`;
-    row.style.cssText = 'font-size:12px;color:var(--text-dim);margin:2px 0;';
-    progress.appendChild(row);
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const res = await fetch(`${API_URL()}/documents/upload`, {
-        method: 'POST',
-        body: formData
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Upload failed');
-      row.textContent = `✓ ${file.name} — ${data.sections} sections`;
-      row.style.color = 'var(--green)';
-      await loadDocuments();
-      selectDoc(data.document_id);
-    } catch (e) {
-      row.textContent = `✗ ${file.name} — ${e.message}`;
-      row.style.color = 'var(--red)';
-    }
-    setTimeout(() => {
-      row.remove();
-      if (!progress.querySelector('div')) progress.style.display = 'none';
-    }, 3000);
-  }
 
   // ── Chat ──────────────────────────────────────────────────────
 
