@@ -439,10 +439,7 @@
       <p><strong>Drop files here</strong><br>PDF, DOCX, TXT</p>
     </div>
 
-    <div class="upload-progress" id="upload-progress">
-      <div class="upload-status" id="upload-status">Indexing document...</div>
-      <div class="progress-bar"><div class="progress-fill"></div></div>
-    </div>
+    <div class="upload-progress" id="upload-progress" style="padding:8px 12px;"></div>
 
     <div class="doc-list" id="doc-list">
       <div class="empty-docs">No documents yet.<br>Upload one to get started.</div>
@@ -580,7 +577,7 @@
   // ── Upload ────────────────────────────────────────────────────
 
   document.getElementById('file-input').addEventListener('change', async (e) => {
-    for (const file of e.target.files) await uploadFile(file);
+    await Promise.all([...e.target.files].map(f => uploadFile(f)));
     e.target.value = '';
   });
 
@@ -590,14 +587,21 @@
   dropZone.addEventListener('drop', async (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    for (const file of e.dataTransfer.files) await uploadFile(file);
+    await Promise.all([...e.dataTransfer.files].map(f => uploadFile(f)));
   });
+
+  // Track per-file upload status rows
+  const _uploadRows = {};
 
   async function uploadFile(file) {
     const progress = document.getElementById('upload-progress');
-    const status = document.getElementById('upload-status');
     progress.style.display = 'block';
-    status.textContent = `Indexing ${file.name}...`;
+
+    // Create a dedicated status line for this file
+    const row = document.createElement('div');
+    row.textContent = `⏳ ${file.name}...`;
+    row.style.cssText = 'font-size:12px;color:var(--text-dim);margin:2px 0;';
+    progress.appendChild(row);
 
     const formData = new FormData();
     formData.append('file', file);
@@ -609,14 +613,18 @@
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Upload failed');
-      status.textContent = `✓ ${data.title} indexed (${data.sections} sections)`;
-      setTimeout(() => progress.style.display = 'none', 2000);
+      row.textContent = `✓ ${file.name} — ${data.sections} sections`;
+      row.style.color = 'var(--green)';
       await loadDocuments();
       selectDoc(data.document_id);
     } catch (e) {
-      status.textContent = `✗ Error: ${e.message}`;
-      setTimeout(() => progress.style.display = 'none', 3000);
+      row.textContent = `✗ ${file.name} — ${e.message}`;
+      row.style.color = 'var(--red)';
     }
+    setTimeout(() => {
+      row.remove();
+      if (!progress.querySelector('div')) progress.style.display = 'none';
+    }, 3000);
   }
 
   // ── Chat ──────────────────────────────────────────────────────
