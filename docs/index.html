@@ -725,7 +725,11 @@
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({ detail: res.statusText }));
-          throw new Error(err.detail || res.statusText);
+          const detail = err.detail;
+          const msg = Array.isArray(detail)
+            ? detail.map(d => d.msg || JSON.stringify(d)).join('; ')
+            : (typeof detail === 'string' ? detail : JSON.stringify(detail) || res.statusText);
+          throw new Error(`${res.status} ${msg}`);
         }
 
         const data = await res.json();
