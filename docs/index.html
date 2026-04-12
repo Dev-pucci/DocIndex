@@ -481,7 +481,8 @@
 </div>
 
 <script>
-  let activeDoc = null;
+  let activeDoc = null;       // primary doc (for single queries)
+  let selectedDocs = new Set(); // ids of all selected docs
   let chatHistory = [];
   let documents = {};
 
@@ -511,50 +512,83 @@
 
     const icons = { pdf: '📕', docx: '📘', doc: '📘', txt: '📄' };
     list.innerHTML = docs.map(d => `
-      <div class="doc-item ${activeDoc?.id === d.id ? 'active' : ''}" onclick="selectDoc('${d.id}')">
+      <div class="doc-item ${selectedDocs.has(d.id) ? 'active' : ''}" onclick="toggleDoc('${d.id}')">
         <div class="doc-icon ${d.type}">${icons[d.type] || '📄'}</div>
         <div class="doc-info">
           <div class="doc-name" title="${d.filename}">${d.title || d.filename}</div>
-          <div class="doc-meta">${d.type?.toUpperCase()} · ${d.sections || 0} sections${d.total_pages ? ` · ${d.total_pages} pages` : ''}</div>
+          <div class="doc-meta">${d.type?.toUpperCase()} · ${d.sections != null ? d.sections : (d.status === 'indexing' ? '⏳ indexing' : '0')} sections${d.total_pages ? ` · ${d.total_pages} pages` : ''}</div>
         </div>
         <button class="doc-delete" onclick="event.stopPropagation(); deleteDoc('${d.id}')" title="Delete">✕</button>
       </div>
     `).join('');
   }
 
-  async function selectDoc(id) {
-    activeDoc = documents[id];
+  function toggleDoc(id) {
+    if (selectedDocs.has(id)) {
+      selectedDocs.delete(id);
+      if (activeDoc?.id === id) activeDoc = selectedDocs.size ? documents[[...selectedDocs][0]] : null;
+    } else {
+      selectedDocs.add(id);
+      activeDoc = documents[id];
+    }
     chatHistory = [];
-    const welcomeEl = document.getElementById('welcome');
-    if (welcomeEl) welcomeEl.style.display = 'none';
     document.getElementById('messages').innerHTML = '';
-
-    document.getElementById('chat-toolbar').innerHTML = `
-      <span class="active-doc-badge">📄 ${activeDoc.title || activeDoc.filename}</span>
-      <span style="color:var(--text-dim);font-size:12px">${activeDoc.sections} sections${activeDoc.total_pages ? ` · ${activeDoc.total_pages} pages` : ''}</span>
-    `;
-
-    document.getElementById('chat-input').disabled = false;
-    document.getElementById('send-btn').disabled = false;
-    document.getElementById('chat-input').placeholder = `Ask about "${activeDoc.title || activeDoc.filename}"...`;
-
-    // Show suggestions
-    const welcome = document.createElement('div');
-    welcome.className = 'welcome';
-    welcome.innerHTML = `
-      <div class="big-icon">📄</div>
-      <h2>${activeDoc.title || activeDoc.filename}</h2>
-      <p>Document indexed and ready. Ask me anything about it.</p>
-      <div class="suggestions">
-        <button class="suggestion-btn" onclick="sendSuggestion(this)">Summarize this document</button>
-        <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the key sections?</button>
-        <button class="suggestion-btn" onclick="sendSuggestion(this)">List the main topics covered</button>
-        <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the most important findings?</button>
-      </div>
-    `;
-    document.getElementById('messages').appendChild(welcome);
+    updateChatToolbar();
     renderDocList();
   }
+
+  function updateChatToolbar() {
+    const count = selectedDocs.size;
+    if (!count) {
+      document.getElementById('chat-toolbar').innerHTML = '<span class="no-doc-msg">← Select or upload a document</span>';
+      document.getElementById('chat-input').disabled = true;
+      document.getElementById('send-btn').disabled = true;
+      return;
+    }
+
+    const names = [...selectedDocs].map(id => documents[id]?.title || documents[id]?.filename || id);
+    const label = count === 1 ? `📄 ${names[0]}` : `📄 ${count} documents selected`;
+    document.getElementById('chat-toolbar').innerHTML = `
+      <span class="active-doc-badge">${label}</span>
+      ${count > 1 ? '<span style="color:var(--accent);font-size:11px;margin-left:8px">Cross-document query</span>' : ''}
+    `;
+    document.getElementById('chat-input').disabled = false;
+    document.getElementById('send-btn').disabled = false;
+    document.getElementById('chat-input').placeholder = count > 1
+      ? `Ask across ${count} documents...`
+      : `Ask about "${names[0]}"...`;
+
+    // Welcome screen
+    const msgs = document.getElementById('messages');
+    if (!msgs.querySelector('.welcome') && !msgs.querySelector('.message')) {
+      const welcome = document.createElement('div');
+      welcome.className = 'welcome';
+      welcome.innerHTML = count > 1 ? `
+        <div class="big-icon">📚</div>
+        <h2>${count} Documents Selected</h2>
+        <p>Ask a question across all selected documents.</p>
+        <div class="suggestions">
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">Compare these documents</button>
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the key differences?</button>
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">Summarize each document</button>
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">What do these documents have in common?</button>
+        </div>
+      ` : `
+        <div class="big-icon">📄</div>
+        <h2>${names[0]}</h2>
+        <p>Document indexed and ready. Ask me anything about it.</p>
+        <div class="suggestions">
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">Summarize this document</button>
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the key sections?</button>
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">List the main topics covered</button>
+          <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the most important findings?</button>
+        </div>
+      `;
+      msgs.appendChild(welcome);
+    }
+  }
+
+  function selectDoc(id) { toggleDoc(id); } // backwards compat
 
   async function deleteDoc(id) {
     if (!confirm('Delete this document?')) return;
@@ -653,7 +687,7 @@
   async function sendMessage(text = null) {
     const input = document.getElementById('chat-input');
     const query = text || input.value.trim();
-    if (!query || !activeDoc) return;
+    if (!query || !selectedDocs.size) return;
 
     input.value = '';
     input.style.height = 'auto';
@@ -675,82 +709,122 @@
     input.disabled = true;
 
     try {
-      const res = await fetch(`${API_URL()}/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          document_id: activeDoc.id,
-          query,
-          chat_history: chatHistory.slice(-10),
-          stream: true
-        })
-      });
+      const isMulti = selectedDocs.size > 1;
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let fullAnswer = '';
-      let sources = [];
-      let hops = [];
+      if (isMulti) {
+        // ── Multi-document query (non-streaming) ──────────────────────
+        const res = await fetch(`${API_URL()}/query/multi`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            document_ids: [...selectedDocs],
+            query,
+            chat_history: chatHistory.slice(-10),
+          })
+        });
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const text = decoder.decode(value);
-        const lines = text.split('\n');
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6);
-          if (data === '[DONE]') break;
-
-          try {
-            const chunk = JSON.parse(data);
-            if (chunk.type === 'text') {
-              fullAnswer += chunk.content;
-              bubble.textContent = fullAnswer;
-              scrollToBottom();
-            } else if (chunk.type === 'sources') {
-              sources = chunk.content;
-            } else if (chunk.type === 'hop') {
-              hops.push(chunk.content);
-            }
-          } catch (e) {}
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          throw new Error(err.detail || res.statusText);
         }
-      }
 
-      bubble.classList.remove('streaming');
-      chatHistory.push({ role: 'assistant', content: fullAnswer });
+        const data = await res.json();
+        const fullAnswer = data.answer || '';
+        const sources = data.sources || [];
 
-      // Render sources
-      if (sources.length) {
-        const sourcesEl = document.createElement('div');
-        sourcesEl.className = 'msg-sources';
-        sourcesEl.innerHTML = sources.map(s =>
-          `<div class="source-chip">📄 ${s.title}${s.page ? ` <span>p.${s.page}</span>` : ''}</div>`
-        ).join('');
-        assistantMsg.querySelector('.msg-body').appendChild(sourcesEl);
-      }
+        bubble.classList.remove('streaming');
+        bubble.textContent = fullAnswer;
+        chatHistory.push({ role: 'assistant', content: fullAnswer });
 
-      // Render hop trace (collapsible)
-      if (hops.length) {
-        const traceEl = document.createElement('details');
-        traceEl.className = 'hop-trace';
-        const actionCounts = hops.reduce((a,h) => { a[h.action]=(a[h.action]||0)+1; return a; }, {});
-        const summary = Object.entries(actionCounts).map(([k,v])=>`${v}×${k}`).join(' · ');
-        traceEl.innerHTML = `<summary>🔍 Retrieval trace — ${hops.length} hops (${summary})</summary>
-          <div class="hop-list">${hops.map(h => `
-            <div class="hop-item">
-              <span class="hop-badge ${h.action}">${h.action}</span>
-              <span class="hop-text">
-                ${h.action === 'PLAN'
-                  ? `<strong>Starting points:</strong> ${(h.targets||[]).join(', ') || 'none'} — ${h.reasoning||''}`
-                  : `<strong>${h.node_title||''}</strong> — ${h.reasoning||''}`
-                }
-              </span>
-            </div>`).join('')}
-          </div>`;
-        assistantMsg.querySelector('.msg-body').appendChild(traceEl);
+        if (sources.length) {
+          const sourcesEl = document.createElement('div');
+          sourcesEl.className = 'msg-sources';
+          sourcesEl.innerHTML = sources.map(s =>
+            `<div class="source-chip">📄 ${s.document_title || s.title || ''}${s.page ? ` <span>p.${s.page}</span>` : ''}</div>`
+          ).join('');
+          assistantMsg.querySelector('.msg-body').appendChild(sourcesEl);
+        }
+
+      } else {
+        // ── Single-document query (streaming) ────────────────────────
+        const docId = [...selectedDocs][0];
+        const res = await fetch(`${API_URL()}/query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            document_id: docId,
+            query,
+            chat_history: chatHistory.slice(-10),
+            stream: true
+          })
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let fullAnswer = '';
+        let sources = [];
+        let hops = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const text = decoder.decode(value);
+          const lines = text.split('\n');
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6);
+            if (data === '[DONE]') break;
+
+            try {
+              const chunk = JSON.parse(data);
+              if (chunk.type === 'text') {
+                fullAnswer += chunk.content;
+                bubble.textContent = fullAnswer;
+                scrollToBottom();
+              } else if (chunk.type === 'sources') {
+                sources = chunk.content;
+              } else if (chunk.type === 'hop') {
+                hops.push(chunk.content);
+              }
+            } catch (e) {}
+          }
+        }
+
+        bubble.classList.remove('streaming');
+        chatHistory.push({ role: 'assistant', content: fullAnswer });
+
+        // Render sources
+        if (sources.length) {
+          const sourcesEl = document.createElement('div');
+          sourcesEl.className = 'msg-sources';
+          sourcesEl.innerHTML = sources.map(s =>
+            `<div class="source-chip">📄 ${s.title}${s.page ? ` <span>p.${s.page}</span>` : ''}</div>`
+          ).join('');
+          assistantMsg.querySelector('.msg-body').appendChild(sourcesEl);
+        }
+
+        // Render hop trace (collapsible)
+        if (hops.length) {
+          const traceEl = document.createElement('details');
+          traceEl.className = 'hop-trace';
+          const actionCounts = hops.reduce((a,h) => { a[h.action]=(a[h.action]||0)+1; return a; }, {});
+          const summary = Object.entries(actionCounts).map(([k,v])=>`${v}×${k}`).join(' · ');
+          traceEl.innerHTML = `<summary>🔍 Retrieval trace — ${hops.length} hops (${summary})</summary>
+            <div class="hop-list">${hops.map(h => `
+              <div class="hop-item">
+                <span class="hop-badge ${h.action}">${h.action}</span>
+                <span class="hop-text">
+                  ${h.action === 'PLAN'
+                    ? `<strong>Starting points:</strong> ${(h.targets||[]).join(', ') || 'none'} — ${h.reasoning||''}`
+                    : `<strong>${h.node_title||''}</strong> — ${h.reasoning||''}`
+                  }
+                </span>
+              </div>`).join('')}
+            </div>`;
+          assistantMsg.querySelector('.msg-body').appendChild(traceEl);
+        }
       }
 
     } catch (e) {
